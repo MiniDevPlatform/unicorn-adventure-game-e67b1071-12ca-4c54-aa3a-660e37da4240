@@ -1,0 +1,1626 @@
+/**
+ * ═══════════════════════════════════════════════════════════════════════════════
+ * MINIDEV ONE TEMPLATE - GAME ENGINE
+ * ═══════════════════════════════════════════════════════════════════════════════
+ * 
+ * Complete game engine with ECS architecture.
+ * Supports: platformer, snake, breakout, puzzle, shooter, racing, idle,
+ * tower defense, tactics, arcade, RPG, adventure, card, word, visual novel, sandbox
+ */
+
+import { FEATURES, isGame } from '@/lib/config';
+
+// =============================================================================
+// TYPE DEFINITIONS
+// =============================================================================
+
+// Entity-Component-System Types
+export interface Entity {
+  id: string;
+  active: boolean;
+  tags: string[];
+}
+
+export interface Transform extends Entity {
+  x: number;
+  y: number;
+  z?: number;
+  width: number;
+  height: number;
+  rotation: number;
+  scaleX: number;
+  scaleY: number;
+  anchorX: number;
+  anchorY: number;
+}
+
+export interface RigidBody extends Entity {
+  velocityX: number;
+  velocityY: number;
+  velocityZ?: number;
+  accelerationX: number;
+  accelerationY: number;
+  mass: number;
+  isStatic: boolean;
+  isKinematic: boolean;
+  onGround: boolean;
+  grounded: boolean;
+}
+
+export interface Sprite extends Entity {
+  color: string;
+  image?: HTMLImageElement;
+  spriteSheet?: SpriteSheet;
+  frame: number;
+  frameTime: number;
+  animation: string;
+  flipX: boolean;
+  flipY: boolean;
+  opacity: number;
+  visible: boolean;
+}
+
+export interface Collider extends Entity {
+  shape: 'rectangle' | 'circle' | 'polygon';
+  offsetX: number;
+  offsetY: number;
+  isTrigger: boolean;
+  layer: string;
+  mask: string;
+}
+
+export interface Health extends Entity {
+  current: number;
+  max: number;
+  invincible: boolean;
+  invincibilityTime: number;
+  onDeath?: () => void;
+  onDamage?: (amount: number) => void;
+}
+
+export interface Score extends Entity {
+  value: number;
+  display: string;
+  format: 'number' | 'time' | 'currency';
+}
+
+export interface Lives extends Entity {
+  count: number;
+  max: number;
+  display: string;
+  icon: string;
+}
+
+export interface Enemy extends Entity {
+  type: 'patrol' | 'chase' | 'shoot' | 'boss' | 'miniboss';
+  health: number;
+  damage: number;
+  speed: number;
+  target?: string;
+  behavior?: () => void;
+}
+
+export interface Coin extends Entity {
+  value: number;
+  collected: boolean;
+  respawn: boolean;
+  respawnTime: number;
+}
+
+export interface PowerUp extends Entity {
+  type: 'speed' | 'shield' | 'fire' | 'freeze' | 'ghost' | 'magnet' | 'multiplier';
+  duration: number;
+  active: boolean;
+  icon: string;
+}
+
+export interface Projectile extends Entity {
+  damage: number;
+  friendly: boolean;
+  pierce: number;
+  lifetime: number;
+}
+
+export interface Platform extends Entity {
+  color: string;
+  type: 'solid' | 'passable' | 'bouncy' | 'moving' | 'falling';
+  path?: { x: number; y: number }[];
+  pathIndex: number;
+  pathSpeed: number;
+}
+
+export interface Particle extends Entity {
+  vx: number;
+  vy: number;
+  life: number;
+  maxLife: number;
+  size: number;
+  startColor: string;
+  endColor: string;
+  gravity: number;
+}
+
+export interface Text extends Entity {
+  text: string;
+  font: string;
+  fontSize: number;
+  color: string;
+  align: 'left' | 'center' | 'right';
+  shadow: boolean;
+}
+
+export interface Camera extends Entity {
+  target?: string;
+  shakeX: number;
+  shakeY: number;
+  shakeDuration: number;
+  boundsMinX: number;
+  boundsMinY: number;
+  boundsMaxX: number;
+  boundsMaxY: number;
+  smoothing: number;
+}
+
+export interface SpriteSheet {
+  image: HTMLImageElement;
+  frameWidth: number;
+  frameHeight: number;
+  frames: number;
+  animations: Record<string, { start: number; end: number; speed: number; loop: boolean }>;
+}
+
+// =============================================================================
+// INPUT MANAGER
+// =============================================================================
+class InputManager {
+  private keys: Map<string, boolean> = new Map();
+  private keysPressed: Set<string> = new Map();
+  private keysJustPressed: Set<string> = new Set();
+  private keysJustReleased: Set<string> = new Set();
+  private mouse: { x: number; y: number; down: boolean; justDown: boolean } = { x: 0, y: 0, down: false, justDown: false };
+  private touch: Map<string, { x: number; y: number; startX: number; startY: number }> = new Map();
+  private gamepad: Gamepad | null = null;
+  private gamepadIndex: number = -1;
+
+  constructor() {
+    this.setupKeyboard();
+    this.setupMouse();
+    this.setupTouch();
+    this.setupGamepad();
+  }
+
+  private setupKeyboard(): void {
+    window.addEventListener('keydown', (e) => {
+      if (!this.keys.get(e.code)) {
+        this.keysJustPressed.add(e.code);
+      }
+      this.keys.set(e.code, true);
+    });
+    window.addEventListener('keyup', (e) => {
+      this.keys.set(e.code, false);
+      this.keysJustReleased.add(e.code);
+    });
+  }
+
+  private setupMouse(): void {
+    const canvas = document.querySelector('canvas');
+    if (canvas) {
+      canvas.addEventListener('mousedown', (e) => {
+        this.mouse.down = true;
+        this.mouse.justDown = true;
+        this.updateMousePos(e);
+      });
+      canvas.addEventListener('mouseup', () => {
+        this.mouse.down = false;
+      });
+      canvas.addEventListener('mousemove', (e) => this.updateMousePos(e));
+    }
+  }
+
+  private updateMousePos(e: MouseEvent): void {
+    const canvas = document.querySelector('canvas');
+    if (canvas) {
+      const rect = canvas.getBoundingClientRect();
+      this.mouse.x = e.clientX - rect.left;
+      this.mouse.y = e.clientY - rect.top;
+    }
+  }
+
+  private setupTouch(): void {
+    const canvas = document.querySelector('canvas');
+    if (canvas) {
+      canvas.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        Array.from(e.changedTouches).forEach(touch => {
+          this.touch.set(touch.identifier, {
+            x: touch.clientX,
+            y: touch.clientY,
+            startX: touch.clientX,
+            startY: touch.clientY,
+          });
+        });
+      });
+      canvas.addEventListener('touchmove', (e) => {
+        e.preventDefault();
+        Array.from(e.changedTouches).forEach(touch => {
+          const t = this.touch.get(touch.identifier);
+          if (t) {
+            t.x = touch.clientX;
+            t.y = touch.clientY;
+          }
+        });
+      });
+      canvas.addEventListener('touchend', (e) => {
+        Array.from(e.changedTouches).forEach(touch => {
+          this.touch.delete(touch.identifier);
+        });
+      });
+    }
+  }
+
+  private setupGamepad(): void {
+    window.addEventListener('gamepadconnected', (e) => {
+      this.gamepadIndex = e.gamepad.index;
+    });
+    window.addEventListener('gamepaddisconnected', () => {
+      this.gamepadIndex = -1;
+    });
+  }
+
+  update(): void {
+    // Poll gamepad
+    if (this.gamepadIndex >= 0) {
+      const gamepads = navigator.getGamepads();
+      this.gamepad = gamepads[this.gamepadIndex] || null;
+    }
+
+    // Clear frame-specific flags
+    this.keysJustPressed.clear();
+    this.keysJustReleased.clear();
+    this.mouse.justDown = false;
+  }
+
+  isKeyDown(key: string): boolean {
+    return this.keys.get(key) || false;
+  }
+
+  isKeyPressed(key: string): boolean {
+    return this.keysJustPressed.has(key);
+  }
+
+  isKeyReleased(key: string): boolean {
+    return this.keysJustReleased.has(key);
+  }
+
+  isLeft(): boolean {
+    return this.isKeyDown('ArrowLeft') || this.isKeyDown('KeyA') ||
+           (this.gamepad?.axes[0] < -0.5 ?? false);
+  }
+
+  isRight(): boolean {
+    return this.isKeyDown('ArrowRight') || this.isKeyDown('KeyD') ||
+           (this.gamepad?.axes[0] > 0.5 ?? false);
+  }
+
+  isUp(): boolean {
+    return this.isKeyDown('ArrowUp') || this.isKeyDown('KeyW') ||
+           (this.gamepad?.buttons[12]?.pressed ?? false);
+  }
+
+  isDown(): boolean {
+    return this.isKeyDown('ArrowDown') || this.isKeyDown('KeyS') ||
+           (this.gamepad?.buttons[13]?.pressed ?? false);
+  }
+
+  isJump(): boolean {
+    return this.isKeyPressed('Space') || this.isKeyPressed('ArrowUp') || this.isKeyPressed('KeyW') ||
+           (this.gamepad?.buttons[0]?.pressed ?? false);
+  }
+
+  isAction(): boolean {
+    return this.isKeyPressed('KeyE') || this.isKeyPressed('Enter') ||
+           (this.gamepad?.buttons[1]?.pressed ?? false);
+  }
+
+  isPause(): boolean {
+    return this.isKeyPressed('Escape') || this.isKeyPressed('KeyP') ||
+           (this.gamepad?.buttons[9]?.pressed ?? false);
+  }
+
+  getMouse(): { x: number; y: number; down: boolean; justDown: boolean } {
+    return this.mouse;
+  }
+
+  getTouch(): Map<string, { x: number; y: number; startX: number; startY: number }> {
+    return this.touch;
+  }
+
+  getGamepad(): Gamepad | null {
+    return this.gamepad;
+  }
+
+  getAxis(axis: 'left' | 'right' | 'leftStick' | 'rightStick'): { x: number; y: number } {
+    const gp = this.gamepad;
+    if (!gp) return { x: 0, y: 0 };
+    
+    switch (axis) {
+      case 'leftStick':
+      case 'left':
+        return { x: gp.axes[0] || 0, y: gp.axes[1] || 0 };
+      case 'rightStick':
+      case 'right':
+        return { x: gp.axes[2] || 0, y: gp.axes[3] || 0 };
+      default:
+        return { x: 0, y: 0 };
+    }
+  }
+}
+
+// =============================================================================
+// PHYSICS ENGINE
+// =============================================================================
+class Physics {
+  gravity: number;
+  friction: number;
+  bounce: number;
+  airResistance: number;
+  maxVelocity: number;
+
+  constructor() {
+    const physics = FEATURES.game.physics;
+    this.gravity = physics.gravity;
+    this.friction = physics.friction;
+    this.bounce = physics.bounce;
+    this.airResistance = physics.airResistance;
+    this.maxVelocity = physics.maxVelocity;
+  }
+
+  update(entity: Transform & RigidBody, dt: number): void {
+    if (entity.isStatic) return;
+
+    // Apply gravity
+    if (!entity.grounded) {
+      entity.velocityY += this.gravity * entity.mass * dt;
+    }
+
+    // Apply friction
+    if (entity.grounded) {
+      entity.velocityX *= this.friction;
+    } else {
+      entity.velocityX *= (1 - this.airResistance);
+    }
+
+    // Clamp velocity
+    entity.velocityX = Math.max(-this.maxVelocity, Math.min(this.maxVelocity, entity.velocityX));
+    entity.velocityY = Math.max(-this.maxVelocity * 2, Math.min(this.maxVelocity * 2, entity.velocityY));
+
+    // Update position
+    entity.x += entity.velocityX * dt * 60;
+    entity.y += entity.velocityY * dt * 60;
+
+    // Reset grounded
+    entity.grounded = false;
+  }
+
+  // AABB Collision Detection
+  checkCollision(a: Transform, b: Transform): boolean {
+    return a.x < b.x + b.width &&
+           a.x + a.width > b.x &&
+           a.y < b.y + b.height &&
+           a.y + a.height > b.y;
+  }
+
+  // Circle Collision
+  checkCircleCollision(a: Transform, b: Transform, radiusA: number, radiusB: number): boolean {
+    const dx = (a.x + a.width / 2) - (b.x + b.width / 2);
+    const dy = (a.y + a.height / 2) - (b.y + b.height / 2);
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    return distance < radiusA + radiusB;
+  }
+
+  // Resolve collision with bounce
+  resolveCollision(entity: Transform & RigidBody, platform: Transform): void {
+    const overlapX = Math.min(entity.x + entity.width - platform.x, platform.x + platform.width - entity.x);
+    const overlapY = Math.min(entity.y + entity.height - platform.y, platform.y + platform.height - entity.y);
+
+    if (overlapX < overlapY) {
+      // Horizontal collision
+      if (entity.velocityX > 0) {
+        entity.x = platform.x - entity.width;
+      } else {
+        entity.x = platform.x + platform.width;
+      }
+      entity.velocityX *= -this.bounce;
+    } else {
+      // Vertical collision
+      if (entity.velocityY > 0) {
+        entity.y = platform.y - entity.height;
+        entity.grounded = true;
+      } else {
+        entity.y = platform.y + platform.height;
+      }
+      entity.velocityY *= -this.bounce;
+    }
+  }
+
+  // Point in rectangle
+  pointInRect(px: number, py: number, rect: Transform): boolean {
+    return px >= rect.x && px <= rect.x + rect.width &&
+           py >= rect.y && py <= rect.y + rect.height;
+  }
+
+  // Distance between points
+  distance(x1: number, y1: number, x2: number, y2: number): number {
+    return Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2);
+  }
+
+  // Angle between points
+  angle(x1: number, y1: number, x2: number, y2: number): number {
+    return Math.atan2(y2 - y1, x2 - x1);
+  }
+
+  // Lerp
+  lerp(a: number, b: number, t: number): number {
+    return a + (b - a) * t;
+  }
+
+  // Clamp
+  clamp(value: number, min: number, max: number): number {
+    return Math.max(min, Math.min(max, value));
+  }
+
+  // Random
+  random(min: number, max: number): number {
+    return Math.random() * (max - min) + min;
+  }
+
+  randomInt(min: number, max: number): number {
+    return Math.floor(this.random(min, max + 1));
+  }
+
+  randomChoice<T>(array: T[]): T {
+    return array[Math.floor(Math.random() * array.length)];
+  }
+
+  shuffle<T>(array: T[]): T[] {
+    const result = [...array];
+    for (let i = result.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [result[i], result[j]] = [result[j], result[i]];
+    }
+    return result;
+  }
+}
+
+// =============================================================================
+// AUDIO MANAGER
+// =============================================================================
+class AudioManager {
+  private sounds: Map<string, AudioBuffer> = new Map();
+  private music: AudioBuffer | null = null;
+  private context: AudioContext | null = null;
+  private gainNode: GainNode | null = null;
+  private musicGain: GainNode | null = null;
+  private muted: boolean = false;
+  private volume: number = 0.7;
+
+  constructor() {
+    if (FEATURES.audio.enabled) {
+      this.init();
+    }
+  }
+
+  private init(): void {
+    try {
+      this.context = new (window.AudioContext || (window as any).webkitAudioContext)();
+      this.gainNode = this.context.createGain();
+      this.gainNode.gain.value = this.volume;
+      this.gainNode.connect(this.context.destination);
+      
+      this.musicGain = this.context.createGain();
+      this.musicGain.gain.value = this.volume * 0.5;
+      this.musicGain.connect(this.context.destination);
+    } catch (e) {
+      console.warn('Audio not supported:', e);
+    }
+  }
+
+  async loadSound(name: string, url: string): Promise<void> {
+    if (!this.context || !FEATURES.audio.sfx) return;
+    try {
+      const response = await fetch(url);
+      const arrayBuffer = await response.arrayBuffer();
+      const audioBuffer = await this.context.decodeAudioData(arrayBuffer);
+      this.sounds.set(name, audioBuffer);
+    } catch (e) {
+      console.warn(`Failed to load sound ${name}:`, e);
+    }
+  }
+
+  play(name: string, loop: boolean = false): void {
+    if (this.muted || !this.context || !this.gainNode) return;
+    const buffer = this.sounds.get(name);
+    if (buffer) {
+      const source = this.context.createBufferSource();
+      source.buffer = buffer;
+      source.loop = loop;
+      source.connect(this.gainNode);
+      source.start();
+    }
+  }
+
+  playGenerated(type: 'jump' | 'coin' | 'hit' | 'win' | 'lose' | 'shoot' | 'explosion'): void {
+    if (this.muted || !this.context || !this.gainNode) return;
+    
+    const ctx = this.context;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    
+    osc.connect(gain);
+    gain.connect(this.gainNode);
+    
+    const now = ctx.currentTime;
+    
+    switch (type) {
+      case 'jump':
+        osc.frequency.setValueAtTime(300, now);
+        osc.frequency.exponentialRampToValueAtTime(600, now + 0.1);
+        gain.gain.setValueAtTime(0.3, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+        osc.start(now);
+        osc.stop(now + 0.1);
+        break;
+      case 'coin':
+        osc.frequency.setValueAtTime(800, now);
+        osc.frequency.setValueAtTime(1200, now + 0.05);
+        gain.gain.setValueAtTime(0.3, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+        osc.start(now);
+        osc.stop(now + 0.15);
+        break;
+      case 'hit':
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(200, now);
+        osc.frequency.exponentialRampToValueAtTime(50, now + 0.1);
+        gain.gain.setValueAtTime(0.3, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+        osc.start(now);
+        osc.stop(now + 0.1);
+        break;
+      case 'win':
+        osc.frequency.setValueAtTime(400, now);
+        osc.frequency.setValueAtTime(500, now + 0.1);
+        osc.frequency.setValueAtTime(600, now + 0.2);
+        osc.frequency.setValueAtTime(800, now + 0.3);
+        gain.gain.setValueAtTime(0.3, now);
+        gain.gain.setValueAtTime(0.3, now + 0.3);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
+        osc.start(now);
+        osc.stop(now + 0.5);
+        break;
+      case 'lose':
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(400, now);
+        osc.frequency.exponentialRampToValueAtTime(100, now + 0.3);
+        gain.gain.setValueAtTime(0.3, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+        osc.start(now);
+        osc.stop(now + 0.3);
+        break;
+      case 'shoot':
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(800, now);
+        osc.frequency.exponentialRampToValueAtTime(200, now + 0.1);
+        gain.gain.setValueAtTime(0.2, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+        osc.start(now);
+        osc.stop(now + 0.1);
+        break;
+      case 'explosion':
+        const noise = ctx.createBufferSource();
+        const noiseBuffer = ctx.createBuffer(1, ctx.sampleRate * 0.3, ctx.sampleRate);
+        const output = noiseBuffer.getChannelData(0);
+        for (let i = 0; i < noiseBuffer.length; i++) {
+          output[i] = Math.random() * 2 - 1;
+        }
+        noise.buffer = noiseBuffer;
+        const noiseGain = ctx.createGain();
+        noise.connect(noiseGain);
+        noiseGain.connect(this.gainNode);
+        noiseGain.gain.setValueAtTime(0.5, now);
+        noiseGain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+        noise.start(now);
+        noise.stop(now + 0.3);
+        break;
+    }
+  }
+
+  setVolume(v: number): void {
+    this.volume = this.clamp(v, 0, 1);
+    if (this.gainNode) this.gainNode.gain.value = this.volume;
+    if (this.musicGain) this.musicGain.gain.value = this.volume * 0.5;
+  }
+
+  setMuted(m: boolean): void {
+    this.muted = m;
+    if (this.gainNode) this.gainNode.gain.value = m ? 0 : this.volume;
+  }
+
+  private clamp(v: number, min: number, max: number): number {
+    return Math.max(min, Math.min(max, v));
+  }
+}
+
+// =============================================================================
+// PARTICLE SYSTEM
+// =============================================================================
+class ParticleSystem {
+  private particles: Particle[] = [];
+
+  emit(x: number, y: number, count: number, options: {
+    color?: string;
+    size?: number;
+    speed?: number;
+    life?: number;
+    gravity?: number;
+    spread?: number;
+  } = {}): void {
+    const {
+      color = '#ffffff',
+      size = 4,
+      speed = 5,
+      life = 1,
+      gravity = 0.1,
+      spread = Math.PI * 2,
+    } = options;
+
+    for (let i = 0; i < count; i++) {
+      const angle = Math.random() * spread - spread / 2;
+      const velocity = Math.random() * speed;
+      this.particles.push({
+        id: `particle_${Date.now()}_${i}`,
+        active: true,
+        tags: ['particle'],
+        x,
+        y,
+        width: size,
+        height: size,
+        rotation: 0,
+        scaleX: 1,
+        scaleY: 1,
+        anchorX: 0.5,
+        anchorY: 0.5,
+        vx: Math.cos(angle) * velocity,
+        vy: Math.sin(angle) * velocity,
+        life,
+        maxLife: life,
+        size,
+        startColor: color,
+        endColor: 'transparent',
+        gravity,
+      });
+    }
+  }
+
+  update(dt: number): void {
+    this.particles = this.particles.filter(p => {
+      if (!p.active || p.life <= 0) return false;
+      
+      p.x += p.vx;
+      p.y += p.vy;
+      p.vy += p.gravity;
+      p.life -= dt;
+      
+      return p.life > 0;
+    });
+  }
+
+  render(ctx: CanvasRenderingContext2D): void {
+    this.particles.forEach(p => {
+      const alpha = p.life / p.maxLife;
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = p.startColor;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size * alpha, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    ctx.globalAlpha = 1;
+  }
+
+  clear(): void {
+    this.particles = [];
+  }
+}
+
+// =============================================================================
+// GAME ENGINE
+// =============================================================================
+export class GameEngine {
+  private canvas: HTMLCanvasElement;
+  private ctx: CanvasRenderingContext2D;
+  private running: boolean = false;
+  private paused: boolean = false;
+  private lastTime: number = 0;
+  private deltaTime: number = 0;
+  private fps: number = 0;
+  private frameCount: number = 0;
+  private lastFpsUpdate: number = 0;
+
+  // Systems
+  public input: InputManager;
+  public physics: Physics;
+  public audio: AudioManager;
+  public particles: ParticleSystem;
+
+  // Entities
+  private entities: Map<string, any> = new Map();
+  private entitiesByTag: Map<string, Set<string>> = new Map();
+
+  // Game state
+  public score: number = 0;
+  public lives: number = FEATURES.game.difficulty.lives;
+  public level: number = 1;
+  public gameOver: boolean = false;
+  public victory: boolean = false;
+  public timer: number = 0;
+  public timerEnabled: boolean = FEATURES.game.difficulty.timerDuration > 0;
+  public timerDuration: number = FEATURES.game.difficulty.timerDuration;
+
+  // Camera
+  public camera: Camera = {
+    id: 'camera',
+    x: 0,
+    y: 0,
+    width: 800,
+    height: 600,
+    rotation: 0,
+    scaleX: 1,
+    scaleY: 1,
+    anchorX: 0,
+    anchorY: 0,
+    active: true,
+    tags: ['camera'],
+    shakeX: 0,
+    shakeY: 0,
+    shakeDuration: 0,
+    boundsMinX: 0,
+    boundsMinY: 0,
+    boundsMaxX: 0,
+    boundsMaxY: 0,
+    smoothing: 0.1,
+  };
+
+  // Canvas size
+  private canvasWidth: number;
+  private canvasHeight: number;
+
+  constructor(canvasId: string) {
+    // Get canvas
+    const canvas = document.getElementById(canvasId) as HTMLCanvasElement;
+    if (!canvas) throw new Error(`Canvas "${canvasId}" not found`);
+    this.canvas = canvas;
+    this.ctx = canvas.getContext('2d')!;
+
+    // Setup canvas
+    this.resize();
+    window.addEventListener('resize', () => this.resize());
+
+    // Initialize systems
+    this.input = new InputManager();
+    this.physics = new Physics();
+    this.audio = new AudioManager();
+    this.particles = new ParticleSystem();
+
+    this.canvasWidth = FEATURES.game.canvas.width;
+    this.canvasHeight = FEATURES.game.canvas.height;
+
+    // Setup controls
+    this.canvas.addEventListener('click', () => {
+      if (!this.running) this.start();
+    });
+
+    console.log(`[GameEngine] Initialized for ${FEATURES.game.type}`);
+  }
+
+  resize(): void {
+    const config = FEATURES.game.canvas;
+    if (config.responsive) {
+      this.canvas.width = Math.min(window.innerWidth, config.width);
+      this.canvas.height = Math.min(window.innerHeight, config.height);
+    } else {
+      this.canvas.width = config.width;
+      this.canvas.height = config.height;
+    }
+  }
+
+  // =============================================================================
+  // ENTITY MANAGEMENT
+  // =============================================================================
+  createEntity<T extends object>(id: string, component: T): T & Entity {
+    const entity = { ...component, id, active: true, tags: [] } as T & Entity;
+    this.entities.set(id, entity);
+    return entity;
+  }
+
+  getEntity<T = any>(id: string): T | undefined {
+    return this.entities.get(id) as T | undefined;
+  }
+
+  destroyEntity(id: string): void {
+    const entity = this.entities.get(id);
+    if (entity?.tags) {
+      entity.tags.forEach(tag => {
+        this.entitiesByTag.get(tag)?.delete(id);
+      });
+    }
+    this.entities.delete(id);
+  }
+
+  getEntitiesWithTag<T = any>(tag: string): (T & Entity)[] {
+    const ids = this.entitiesByTag.get(tag);
+    if (!ids) return [];
+    return Array.from(ids).map(id => this.entities.get(id) as T & Entity).filter(Boolean);
+  }
+
+  addTag(entityId: string, tag: string): void {
+    const entity = this.entities.get(entityId);
+    if (!entity) return;
+    
+    if (!entity.tags.includes(tag)) {
+      entity.tags.push(tag);
+    }
+    
+    if (!this.entitiesByTag.has(tag)) {
+      this.entitiesByTag.set(tag, new Set());
+    }
+    this.entitiesByTag.get(tag)!.add(entityId);
+  }
+
+  // =============================================================================
+  // PLAYER
+  // =============================================================================
+  createPlayer(x: number, y: number): Transform & RigidBody & Sprite {
+    const player = this.createEntity<Transform & RigidBody & Sprite>('player', {
+      x,
+      y,
+      width: 32,
+      height: 40,
+      rotation: 0,
+      scaleX: 1,
+      scaleY: 1,
+      anchorX: 0.5,
+      anchorY: 0.5,
+      tags: ['player', 'collidable'],
+      velocityX: 0,
+      velocityY: 0,
+      accelerationX: 0,
+      accelerationY: 0,
+      mass: 1,
+      isStatic: false,
+      isKinematic: false,
+      onGround: false,
+      grounded: false,
+      color: FEATURES.game.character.clothes,
+      image: undefined,
+      frame: 0,
+      frameTime: 0,
+      animation: 'idle',
+      flipX: false,
+      flipY: false,
+      opacity: 1,
+      visible: true,
+    });
+
+    this.addTag('player', 'player');
+    return player;
+  }
+
+  // =============================================================================
+  // GAME OBJECTS
+  // =============================================================================
+  createPlatform(x: number, y: number, width: number, height: number, color: string): Transform & Platform {
+    const platform = this.createEntity<Transform & Platform>(`platform_${Date.now()}`, {
+      x,
+      y,
+      width,
+      height,
+      rotation: 0,
+      scaleX: 1,
+      scaleY: 1,
+      anchorX: 0,
+      anchorY: 0,
+      tags: ['platform', 'collidable'],
+      color,
+      type: 'solid',
+      path: undefined,
+      pathIndex: 0,
+      pathSpeed: 1,
+    });
+    this.addTag(platform.id, 'platform');
+    return platform;
+  }
+
+  createCoin(x: number, y: number, value: number = 100): Transform & Coin {
+    const coin = this.createEntity<Transform & Coin>(`coin_${Date.now()}`, {
+      x,
+      y,
+      width: 20,
+      height: 20,
+      rotation: 0,
+      scaleX: 1,
+      scaleY: 1,
+      anchorX: 0.5,
+      anchorY: 0.5,
+      tags: ['coin', 'collectible'],
+      value,
+      collected: false,
+      respawn: false,
+      respawnTime: 0,
+    });
+    this.addTag(coin.id, 'coin');
+    return coin;
+  }
+
+  createEnemy(x: number, y: number, type: Enemy['type'] = 'patrol'): Transform & Enemy {
+    const enemy = this.createEntity<Transform & Enemy>(`enemy_${Date.now()}`, {
+      x,
+      y,
+      width: 30,
+      height: 30,
+      rotation: 0,
+      scaleX: 1,
+      scaleY: 1,
+      anchorX: 0.5,
+      anchorY: 0.5,
+      tags: ['enemy', 'collidable'],
+      type,
+      health: 1,
+      damage: 1,
+      speed: FEATURES.game.difficulty.enemySpeed,
+    });
+    this.addTag(enemy.id, 'enemy');
+    return enemy;
+  }
+
+  createProjectile(x: number, y: number, vx: number, vy: number, friendly: boolean = true): Transform & Projectile {
+    const proj = this.createEntity<Transform & Projectile>(`projectile_${Date.now()}`, {
+      x,
+      y,
+      width: 10,
+      height: 10,
+      rotation: Math.atan2(vy, vx),
+      scaleX: 1,
+      scaleY: 1,
+      anchorX: 0.5,
+      anchorY: 0.5,
+      tags: ['projectile'],
+      velocityX: vx,
+      velocityY: vy,
+      accelerationX: 0,
+      accelerationY: 0,
+      mass: 1,
+      isStatic: false,
+      isKinematic: false,
+      onGround: false,
+      grounded: false,
+      damage: 1,
+      friendly,
+      pierce: 1,
+      lifetime: 5,
+    });
+    this.addTag(proj.id, 'projectile');
+    return proj;
+  }
+
+  createText(x: number, y: number, text: string): Transform & Text {
+    const txt = this.createEntity<Transform & Text>(`text_${Date.now()}`, {
+      x,
+      y,
+      width: 0,
+      height: 0,
+      rotation: 0,
+      scaleX: 1,
+      scaleY: 1,
+      anchorX: 0,
+      anchorY: 0,
+      tags: ['text'],
+      text,
+      font: 'bold 24px system-ui',
+      fontSize: 24,
+      color: '#ffffff',
+      align: 'left',
+      shadow: true,
+    });
+    this.addTag(txt.id, 'text');
+    return txt;
+  }
+
+  // =============================================================================
+  // GAME LOOP
+  // =============================================================================
+  start(): void {
+    if (this.running) return;
+    this.running = true;
+    this.lastTime = performance.now();
+    this.lastFpsUpdate = this.lastTime;
+    requestAnimationFrame(this.loop.bind(this));
+    console.log('[GameEngine] Started');
+  }
+
+  stop(): void {
+    this.running = false;
+  }
+
+  pause(): void {
+    this.paused = !this.paused;
+  }
+
+  private loop(timestamp: number): void {
+    if (!this.running) return;
+
+    // Calculate delta time
+    this.deltaTime = (timestamp - this.lastTime) / 1000;
+    this.lastTime = timestamp;
+    this.deltaTime = Math.min(this.deltaTime, 0.1); // Cap at 100ms
+
+    // FPS counter
+    this.frameCount++;
+    if (timestamp - this.lastFpsUpdate >= 1000) {
+      this.fps = this.frameCount;
+      this.frameCount = 0;
+      this.lastFpsUpdate = timestamp;
+    }
+
+    if (!this.paused && !this.gameOver) {
+      this.update(this.deltaTime);
+    }
+
+    this.render();
+
+    this.input.update();
+
+    requestAnimationFrame(this.loop.bind(this));
+  }
+
+  update(dt: number): void {
+    // Update timer
+    if (this.timerEnabled && this.timerDuration > 0) {
+      this.timer += dt;
+      if (this.timer >= this.timerDuration) {
+        this.loseLife();
+        this.timer = 0;
+      }
+    }
+
+    // Update particles
+    this.particles.update(dt);
+
+    // Update enemies AI
+    this.getEntitiesWithTag<Enemy & Transform>('enemy').forEach(enemy => {
+      if (!enemy.active) return;
+      this.updateEnemyAI(enemy, dt);
+    });
+
+    // Update projectiles
+    this.getEntitiesWithTag<Projectile & Transform>(`projectile`).forEach(proj => {
+      if (!proj.active) return;
+      proj.x += proj.velocityX * dt * 60;
+      proj.y += proj.velocityY * dt * 60;
+      proj.lifetime -= dt;
+      if (proj.lifetime <= 0 || proj.x < 0 || proj.x > this.canvasWidth || proj.y < 0 || proj.y > this.canvasHeight) {
+        proj.active = false;
+      }
+    });
+
+    // Update moving platforms
+    this.getEntitiesWithTag<Platform & Transform>('platform').forEach(platform => {
+      if (platform.type === 'moving' && platform.path) {
+        const target = platform.path[platform.pathIndex];
+        if (target) {
+          const dx = target.x - platform.x;
+          const dy = target.y - platform.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist < 5) {
+            platform.pathIndex = (platform.pathIndex + 1) % platform.path.length;
+          } else {
+            platform.x += (dx / dist) * platform.pathSpeed * dt * 60;
+            platform.y += (dy / dist) * platform.pathSpeed * dt * 60;
+          }
+        }
+      }
+    });
+
+    // Coin respawn
+    this.getEntitiesWithTag<Coin & Transform>('coin').forEach(coin => {
+      if (coin.collected && coin.respawn) {
+        coin.respawnTime -= dt;
+        if (coin.respawnTime <= 0) {
+          coin.collected = false;
+        }
+      }
+    });
+
+    // Camera shake
+    if (this.camera.shakeDuration > 0) {
+      this.camera.shakeDuration -= dt;
+      this.camera.shakeX = (Math.random() - 0.5) * 10;
+      this.camera.shakeY = (Math.random() - 0.5) * 10;
+    } else {
+      this.camera.shakeX = 0;
+      this.camera.shakeY = 0;
+    }
+  }
+
+  private updateEnemyAI(enemy: Enemy & Transform, dt: number): void {
+    const player = this.getEntity<Transform & RigidBody>('player');
+    if (!player) return;
+
+    switch (enemy.type) {
+      case 'patrol':
+        // Simple back and forth
+        enemy.x += enemy.speed * dt * 60;
+        if (enemy.x <= 50 || enemy.x >= this.canvasWidth - 50) {
+          enemy.speed *= -1;
+        }
+        break;
+        
+      case 'chase':
+        // Move toward player
+        const dx = player.x - enemy.x;
+        const dy = player.y - enemy.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist > 10) {
+          enemy.x += (dx / dist) * enemy.speed * dt * 60;
+          enemy.y += (dy / dist) * enemy.speed * dt * 60;
+        }
+        break;
+        
+      case 'boss':
+        // Boss behavior - could add patterns
+        if (enemy.health <= 0) {
+          enemy.active = false;
+        }
+        break;
+    }
+  }
+
+  // =============================================================================
+  // RENDERING
+  // =============================================================================
+  render(): void {
+    const ctx = this.ctx;
+    const canvas = this.canvas;
+
+    // Clear with background
+    ctx.fillStyle = FEATURES.game.canvas.background;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Apply camera
+    ctx.save();
+    ctx.translate(-this.camera.x + this.camera.shakeX, -this.camera.y + this.camera.shakeY);
+
+    // Render platforms
+    this.getEntitiesWithTag<Transform & Platform>('platform').forEach(p => {
+      if (!p.active) return;
+      ctx.fillStyle = p.color;
+      ctx.fillRect(p.x, p.y, p.width, p.height);
+    });
+
+    // Render coins
+    this.getEntitiesWithTag<Transform & Coin>('coin').forEach(c => {
+      if (!c.active || c.collected) return;
+      const bob = Math.sin(Date.now() / 200) * 3;
+      ctx.fillStyle = '#f1c40f';
+      ctx.beginPath();
+      ctx.arc(c.x + c.width / 2, c.y + c.height / 2 + bob, c.width / 2, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    // Render enemies
+    this.getEntitiesWithTag<Transform & Enemy>('enemy').forEach(e => {
+      if (!e.active) return;
+      ctx.fillStyle = e.type === 'boss' ? '#9b59b6' : '#e74c3c';
+      ctx.fillRect(e.x, e.y, e.width, e.height);
+    });
+
+    // Render player
+    const player = this.getEntity<Transform & RigidBody & Sprite>('player');
+    if (player?.active) {
+      const char = FEATURES.game.character;
+      const flip = player.velocityX < 0;
+      
+      ctx.save();
+      if (flip) {
+        ctx.translate(player.x + player.width, player.y);
+        ctx.scale(-1, 1);
+        ctx.translate(-player.x, -player.y);
+      }
+
+      // Body
+      ctx.fillStyle = char.clothes;
+      ctx.fillRect(player.x, player.y + 10, player.width, player.height - 10);
+      
+      // Head
+      ctx.fillStyle = char.skin;
+      ctx.beginPath();
+      ctx.arc(player.x + player.width / 2, player.y + 12, 12, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // Hair
+      ctx.fillStyle = char.hair;
+      ctx.beginPath();
+      ctx.arc(player.x + player.width / 2, player.y + 8, 14, Math.PI, 2 * Math.PI);
+      ctx.fill();
+      
+      // Eyes
+      ctx.fillStyle = 'white';
+      ctx.fillRect(player.x + 8, player.y + 10, 6, 8);
+      ctx.fillRect(player.x + 18, player.y + 10, 6, 8);
+      ctx.fillStyle = char.eyes;
+      ctx.fillRect(player.x + 10, player.y + 12, 3, 4);
+      ctx.fillRect(player.x + 20, player.y + 12, 3, 4);
+
+      ctx.restore();
+    }
+
+    // Render projectiles
+    this.getEntitiesWithTag<Transform & Projectile>('projectile').forEach(p => {
+      if (!p.active) return;
+      ctx.fillStyle = p.friendly ? '#f1c40f' : '#e74c3c';
+      ctx.fillRect(p.x, p.y, p.width, p.height);
+    });
+
+    // Render particles
+    this.particles.render(ctx);
+
+    // Render texts
+    this.getEntitiesWithTag<Text & Transform>('text').forEach(t => {
+      if (!t.active) return;
+      ctx.font = t.font;
+      ctx.fillStyle = t.color;
+      ctx.textAlign = t.align;
+      if (t.shadow) {
+        ctx.shadowColor = 'rgba(0,0,0,0.5)';
+        ctx.shadowBlur = 4;
+        ctx.shadowOffsetX = 2;
+        ctx.shadowOffsetY = 2;
+      }
+      ctx.fillText(t.text, t.x, t.y);
+      ctx.shadowColor = 'transparent';
+    });
+
+    ctx.restore();
+
+    // Render UI
+    this.renderUI();
+  }
+
+  private renderUI(): void {
+    const ctx = this.ctx;
+
+    // Score
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 28px system-ui';
+    ctx.textAlign = 'left';
+    ctx.fillText(`Score: ${this.score}`, 20, 40);
+
+    // Lives
+    ctx.font = '24px system-ui';
+    ctx.fillText(`❤️ x ${this.lives}`, 20, 75);
+
+    // Timer
+    if (this.timerEnabled) {
+      ctx.textAlign = 'right';
+      const remaining = Math.max(0, this.timerDuration - this.timer);
+      ctx.fillText(`Time: ${Math.floor(remaining)}s`, this.canvasWidth - 20, 40);
+    }
+
+    // Level
+    ctx.textAlign = 'center';
+    ctx.fillText(`Level ${this.level}`, this.canvasWidth / 2, 40);
+
+    // Game Over
+    if (this.gameOver) {
+      ctx.fillStyle = 'rgba(0,0,0,0.7)';
+      ctx.fillRect(0, 0, this.canvasWidth, this.canvasHeight);
+      
+      ctx.fillStyle = '#e74c3c';
+      ctx.font = 'bold 64px system-ui';
+      ctx.fillText('GAME OVER', this.canvasWidth / 2, this.canvasHeight / 2 - 20);
+      
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '32px system-ui';
+      ctx.fillText(`Final Score: ${this.score}`, this.canvasWidth / 2, this.canvasHeight / 2 + 30);
+      ctx.fillText('Click to restart', this.canvasWidth / 2, this.canvasHeight / 2 + 80);
+    }
+
+    // Victory
+    if (this.victory) {
+      ctx.fillStyle = 'rgba(0,0,0,0.7)';
+      ctx.fillRect(0, 0, this.canvasWidth, this.canvasHeight);
+      
+      ctx.fillStyle = '#2ecc71';
+      ctx.font = 'bold 64px system-ui';
+      ctx.fillText('VICTORY!', this.canvasWidth / 2, this.canvasHeight / 2 - 20);
+      
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '32px system-ui';
+      ctx.fillText(`Final Score: ${this.score}`, this.canvasWidth / 2, this.canvasHeight / 2 + 30);
+    }
+
+    // FPS (debug)
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.font = '12px monospace';
+    ctx.textAlign = 'right';
+    ctx.fillText(`FPS: ${this.fps}`, this.canvasWidth - 10, this.canvasHeight - 10);
+  }
+
+  // =============================================================================
+  // GAME STATE
+  // =============================================================================
+  addScore(points: number): void {
+    const multiplier = FEATURES.game.difficulty.scoreMultiplier;
+    this.score += Math.floor(points * multiplier);
+  }
+
+  loseLife(): void {
+    this.lives--;
+    this.audio.playGenerated('hit');
+    
+    if (this.lives <= 0) {
+      this.gameOver = true;
+      this.audio.playGenerated('lose');
+    }
+  }
+
+  nextLevel(): void {
+    this.level++;
+    this.timer = 0;
+    
+    // Could add level transition here
+  }
+
+  shakeCamera(duration: number = 0.3): void {
+    this.camera.shakeDuration = duration;
+  }
+
+  restart(): void {
+    this.score = 0;
+    this.lives = FEATURES.game.difficulty.lives;
+    this.level = 1;
+    this.timer = 0;
+    this.gameOver = false;
+    this.victory = false;
+    this.particles.clear();
+    
+    // Reset entities
+    this.entities.clear();
+    this.entitiesByTag.clear();
+    
+    // Recreate player
+    this.createPlayer(100, this.canvasHeight - 100);
+    
+    // Initialize game type specific entities
+    this.initLevel();
+  }
+
+  // =============================================================================
+  // COLLISION HELPERS
+  // =============================================================================
+  checkPlayerPlatformCollision(): void {
+    const player = this.getEntity<Transform & RigidBody>('player');
+    if (!player) return;
+
+    // Ground collision
+    if (player.y + player.height > this.canvasHeight - 30) {
+      player.y = this.canvasHeight - 30 - player.height;
+      player.velocityY = 0;
+      player.grounded = true;
+    }
+
+    // Platform collision
+    this.getEntitiesWithTag<Transform & Platform>('platform').forEach(p => {
+      if (!p.active || p.type === 'passable') return;
+      
+      if (this.physics.checkCollision(player, p)) {
+        this.physics.resolveCollision(player, p);
+        
+        // Trigger collision callback
+        if (p.type === 'bouncy') {
+          player.velocityY = -15;
+          this.audio.playGenerated('jump');
+        }
+      }
+    });
+  }
+
+  checkPlayerCoinCollision(): void {
+    const player = this.getEntity<Transform>(`player`);
+    if (!player) return;
+
+    this.getEntitiesWithTag<Transform & Coin>('coin').forEach(coin => {
+      if (!coin.active || coin.collected) return;
+      
+      if (this.physics.checkCollision(player, coin)) {
+        coin.collected = true;
+        this.addScore(coin.value);
+        this.audio.playGenerated('coin');
+        this.particles.emit(coin.x + coin.width / 2, coin.y + coin.height / 2, 10, {
+          color: '#f1c40f',
+          speed: 3,
+          life: 0.5,
+        });
+      }
+    });
+  }
+
+  checkPlayerEnemyCollision(): void {
+    const player = this.getEntity<Transform & RigidBody>(`player`);
+    if (!player) return;
+
+    const health = this.getEntity<any>('player_health');
+    if (health?.invincible) return;
+
+    this.getEntitiesWithTag<Transform & Enemy>('enemy').forEach(enemy => {
+      if (!enemy.active) return;
+      
+      if (this.physics.checkCollision(player, enemy)) {
+        this.loseLife();
+        this.shakeCamera();
+        this.particles.emit(player.x + player.width / 2, player.y + player.height / 2, 15, {
+          color: '#e74c3c',
+          speed: 5,
+        });
+        
+        if (health) {
+          health.invincible = true;
+          setTimeout(() => { health.invincible = false; }, FEATURES.game.difficulty.invincibilityFrames * (1000 / 60));
+        }
+      }
+    });
+  }
+
+  // =============================================================================
+  // LEVEL INITIALIZATION
+  // =============================================================================
+  initLevel(): void {
+    const gameType = FEATURES.game.type;
+    const level = this.level;
+    const levelIndex = level - 1;
+
+    switch (gameType) {
+      case 'platformer':
+        this.initPlatformerLevel(levelIndex);
+        break;
+      case 'snake':
+        this.initSnakeLevel();
+        break;
+      case 'breakout':
+        this.initBreakoutLevel();
+        break;
+      case 'shooter':
+        this.initShooterLevel();
+        break;
+      case 'puzzle':
+        this.initPuzzleLevel();
+        break;
+      default:
+        this.initPlatformerLevel(levelIndex);
+    }
+  }
+
+  private initPlatformerLevel(levelIndex: number): void {
+    // Create ground
+    this.createPlatform(0, this.canvasHeight - 30, this.canvasWidth, 30, '#27ae60');
+
+    // Create platforms
+    const platformCount = Math.min(5 + levelIndex, 15);
+    for (let i = 0; i < platformCount; i++) {
+      this.createPlatform(
+        50 + Math.random() * (this.canvasWidth - 200),
+        150 + Math.random() * 300,
+        100 + Math.random() * 100,
+        20,
+        ['#3498db', '#9b59b6', '#e67e22', '#1abc9c'][i % 4]
+      );
+    }
+
+    // Create coins
+    const coinCount = FEATURES.game.progression.coinsPerLevel;
+    for (let i = 0; i < coinCount; i++) {
+      this.createCoin(
+        50 + Math.random() * (this.canvasWidth - 100),
+        50 + Math.random() * (this.canvasHeight - 200),
+        100
+      );
+    }
+
+    // Create enemies
+    const enemyCount = Math.min(levelIndex + 2, FEATURES.game.progression.enemyCount);
+    for (let i = 0; i < enemyCount; i++) {
+      this.createEnemy(
+        100 + Math.random() * (this.canvasWidth - 200),
+        100 + Math.random() * 200,
+        i % 3 === 0 ? 'chase' : 'patrol'
+      );
+    }
+  }
+
+  private initSnakeLevel(): void {
+    // Snake game initialization handled differently
+    const player = this.createPlayer(this.canvasWidth / 2, this.canvasHeight / 2);
+    player.width = 20;
+    player.height = 20;
+    this.createCoin(Math.random() * this.canvasWidth, Math.random() * this.canvasHeight, 10);
+  }
+
+  private initBreakoutLevel(): void {
+    // Paddle and ball setup
+    const paddle = this.createEntity('paddle', {
+      x: this.canvasWidth / 2 - 50,
+      y: this.canvasHeight - 40,
+      width: 100,
+      height: 15,
+      tags: ['paddle', 'collidable'],
+    });
+
+    const ball = this.createEntity('ball', {
+      x: this.canvasWidth / 2,
+      y: this.canvasHeight - 60,
+      width: 12,
+      height: 12,
+      vx: 4,
+      vy: -4,
+      tags: ['ball'],
+    });
+
+    // Create bricks
+    const rows = 5;
+    const cols = 8;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const health = rows - r;
+        this.createEntity(`brick_${r}_${c}`, {
+          x: 20 + c * 95,
+          y: 50 + r * 30,
+          width: 90,
+          height: 25,
+          health,
+          tags: ['brick', 'collidable'],
+        });
+      }
+    }
+  }
+
+  private initShooterLevel(): void {
+    // Player spaceship
+    const player = this.createPlayer(this.canvasWidth / 2, this.canvasHeight - 100);
+    player.width = 40;
+    player.height = 40;
+  }
+
+  private initPuzzleLevel(): void {
+    // Match-3 grid setup
+    const colors = ['#e74c3c', '#3498db', '#2ecc71', '#f1c40f', '#9b59b6', '#1abc9c'];
+    for (let r = 0; r < 8; r++) {
+      for (let c = 0; c < 8; c++) {
+        this.createEntity(`tile_${r}_${c}`, {
+          x: 50 + c * 45,
+          y: 50 + r * 45,
+          width: 40,
+          height: 40,
+          color: colors[Math.floor(Math.random() * colors.length)],
+          matched: false,
+          tags: ['tile'],
+        });
+      }
+    }
+  }
+}
+
+// =============================================================================
+// EXPORTS
+// =============================================================================
+export type { Entity, Transform, RigidBody, Sprite, Collider, Health, Score, Lives, Enemy, Coin, PowerUp, Projectile, Platform, Particle, Text, Camera, SpriteSheet };
+export { InputManager, Physics, AudioManager, ParticleSystem };
+// GameEngine is already exported at class definition (line 738)
