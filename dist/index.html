@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Create a Unicorn Adventure Game with fairies, a pink princess and magical world.">
+  <meta name="theme-color" content="#FF69B4">
+  
+  <title>Unicorn Adventure Game</title>
+  
+  <!-- PWA -->
+  <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  
+  <!-- Tailwind CSS (inline for simplicity) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            primary: 'var(--primary)',
+            secondary: 'var(--secondary)',
+            accent: 'var(--accent)',
+            background: 'var(--background)',
+            foreground: 'var(--foreground)',
+            card: 'var(--card)',
+            muted: 'var(--muted)',
+            border: 'var(--border)',
+            input: 'var(--input)',
+            success: 'var(--success)',
+            warning: 'var(--warning)',
+            error: 'var(--error)',
+          },
+        },
+      },
+    }
+  </script>
+  
+  <style>
+    /* ==========================================
+       CSS VARIABLES (Theme System)
+       ========================================== */
+    :root {
+      /* Light theme (default) */
+      --primary: #667eea;
+      --secondary: #764ba2;
+      --accent: #f093fb;
+      --success: #22c55e;
+      --warning: #f59e0b;
+      --error: #ef4444;
+      --background: #ffffff;
+      --foreground: #0f172a;
+      --card: #ffffff;
+      --border: #e2e8f0;
+      --muted: #f1f5f9;
+      --input: #f1f5f9;
+      --ring: #667eea;
+      
+      /* Animation */
+      --animation-duration: 300ms;
+    }
+    
+    .dark {
+      --primary: #818cf8;
+      --secondary: #a78bfa;
+      --accent: #f472b6;
+      --success: #4ade80;
+      --warning: #fbbf24;
+      --error: #f87171;
+      --background: #0f172a;
+      --foreground: #f8fafc;
+      --card: #1e293b;
+      --border: #334155;
+      --muted: #1e293b;
+      --input: #1e293b;
+      --ring: #818cf8;
+    }
+    
+    /* ==========================================
+       BASE STYLES
+       ========================================== */
+    * {
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: var(--background);
+      color: var(--foreground);
+      margin: 0;
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+    
+    /* Focus styles */
+    :focus-visible {
+      outline: 2px solid var(--ring);
+      outline-offset: 2px;
+    }
+    
+    /* Scrollbar */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    
+    ::-webkit-scrollbar-track {
+      background: var(--muted);
+    }
+    
+    ::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 4px;
+    }
+    
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--foreground);
+    }
+    
+    /* ==========================================
+       LAYOUT UTILITIES
+       ========================================== */
+    .game-container {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      background: var(--background);
+    }
+    
+    .app-container {
+      max-width: 640px;
+      margin: 0 auto;
+      padding: 1.5rem;
+    }
+    
+    .website-container {
+      min-height: 100vh;
+    }
+    
+    /* ==========================================
+       GAME CANVAS
+       ========================================== */
+    #game-canvas {
+      display: block;
+      border: 2px solid var(--border);
+      border-radius: 8px;
+      background: #1a1a2e;
+      max-width: 100%;
+      height: auto;
+      cursor: pointer;
+    }
+    
+    /* ==========================================
+       UI COMPONENTS
+       ========================================== */
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 0.75rem;
+      padding: 1rem;
+    }
+    
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0.5rem 1rem;
+      border-radius: 0.5rem;
+      font-weight: 500;
+      transition: all var(--animation-duration) ease;
+      cursor: pointer;
+    }
+    
+    .btn-primary {
+      background: var(--primary);
+      color: white;
+    }
+    
+    .btn-primary:hover {
+      opacity: 0.9;
+      transform: translateY(-1px);
+    }
+    
+    .btn-secondary {
+      background: var(--muted);
+      color: var(--foreground);
+    }
+    
+    .btn-secondary:hover {
+      background: var(--border);
+    }
+    
+    /* ==========================================
+       ANIMATIONS
+       ========================================== */
+    @keyframes slide-in {
+      from { transform: translateX(100%); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+    
+    @keyframes slide-out {
+      from { transform: translateX(0); opacity: 1; }
+      to { transform: translateX(100%); opacity: 0; }
+    }
+    
+    @keyframes fade-in {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    
+    .animate-slide-in { animation: slide-in 0.3s ease-out; }
+    .animate-slide-out { animation: slide-out 0.3s ease-out; }
+    .animate-fade-in { animation: fade-in 0.3s ease-out; }
+    .animate-pulse { animation: pulse 2s ease-in-out infinite; }
+    
+    /* ==========================================
+       TOAST NOTIFICATIONS
+       ========================================== */
+    .toast {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 0.5rem;
+      padding: 0.75rem 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+      animation: slide-in 0.3s ease-out;
+    }
+    
+    .toast-success { border-left: 4px solid var(--success); }
+    .toast-error { border-left: 4px solid var(--error); }
+    .toast-warning { border-left: 4px solid var(--warning); }
+    .toast-info { border-left: 4px solid var(--primary); }
+    
+    /* ==========================================
+       RESPONSIVE
+       ========================================== */
+    @media (max-width: 640px) {
+      .app-container {
+        padding: 1rem;
+      }
+    }
+    
+    /* ==========================================
+       ACCESSIBILITY
+       ========================================== */
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+    
+    /* Skip link for accessibility */
+    .skip-link {
+      position: absolute;
+      top: -40px;
+      left: 0;
+      background: var(--primary);
+      color: white;
+      padding: 8px 16px;
+      z-index: 100;
+      transition: top 0.3s;
+    }
+    
+    .skip-link:focus {
+      top: 0;
+    }
+  </style>
+  <script type="module" crossorigin src="/assets/index-DsivX74H.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-DDCtQcKl.css">
+</head>
+<body>
+  <!-- Skip Link -->
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  
+  <!-- Main Content -->
+  <main id="main-content">
+    <!-- 
+      ==========================================
+      CONTAINER - Populated by main.tsx
+      ==========================================
+    -->
+    <div id="app"></div>
+  </main>
+  
+  <!-- ==========================================
+       SCRIPTS - Load TypeScript via ESM
+       ========================================== -->
+  
+  <!-- Fallback for browsers without ESM -->
+  <script nomodule>
+    document.getElementById('app').innerHTML = `
+      <div style="padding: 2rem; text-align: center;">
+        <h1>Browser Not Supported</h1>
+        <p>Please use a modern browser with ES module support.</p>
+      </div>
+    `;
+  </script>
+</body>
+</html>
